@@ -1,0 +1,456 @@
+---
+title: "hw-COVID19-leonahoxha"
+author: "Leona Hoxha"
+format: html
+editor: visual
+html:
+standalone: true
+embed-resources: true
+code-fold: true
+number-sections: true
+toc : true
+---
+
+# Covid-19
+
+The development of the COVID-19 pandemic 2019-2022.
+
+## Loading Packages and the Data
+
+```{r packages}
+#| message: false
+suppressWarnings({
+library(tidyverse)
+library(purrr)
+library(patchwork)
+library(dplyr)
+library(ggplot2)
+library(corrplot)
+library(correlation)
+library(dplyr)
+library(knitr)
+library(stats)
+library(tidyr)})
+```
+
+Two data sets are provided in the repository:
+
+1.  Daily numbers of new cases of COVID-19 and new COVID-19 related deaths in most countries in the world as collected by the World Health Organization (WHO) on a daily basis. The data is from 2022-09-30.
+
+2.  World Bank Development Indicators (WDI) with some socio-economic indicators as provided for most countries in the world.
+
+```{r data}
+wdi <- read.csv("data/WDI.csv")
+who <- read.csv("data/WHO-COVID-19.csv")
+
+who$Date_reported <- as.Date(who$Date_reported)
+```
+
+# COVID-19 time evolution
+
+## Covid Cases and Deaths in Germany's 1st wave
+
+```{r}
+who|>
+      filter(Country=="Germany", Date_reported<="2020-08-31")|>
+    pivot_longer(cols = c("New_cases", "New_deaths"), names_to = "Case_Death", values_to = "Count")|>
+    ggplot(aes(x = Date_reported, y = Count, color = Case_Death)) +
+  geom_line(aes(group=Case_Death))+
+      labs(x = "",
+       y = "Number of Cases",
+       title = "The number of new and death cases through time",
+       color="")+
+      scale_color_manual(values = c("New_cases" = "blue", "New_deaths" = "red"))+
+      theme_minimal()+
+  scale_y_continuous(breaks = seq(0, max(who$New_cases), by = 500))+
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month")
+
+```
+
+Looking at this chart, we can tell that the wave began in March 2020 and finished in May-June 2020. The highest point occurred in April 2020, showing about 6500 new cases and almost 500 deaths. Since this graph uses daily cases data, we notice ups and downs through the time, which are called fluctuations. They may come from changes in test availability over time or can be influenced by the specific days of reporting, particularly during weekends or holidays.
+
+## Cumulative cases in Germany, Italy, France, and UK
+
+```{r}
+who|>
+  filter(Country %in% c("Germany", "Italy", "France", "The United Kingdom"), Date_reported<="2020-08-31")|>
+  group_by(Country)|>
+  arrange(Country, Date_reported)|>
+  mutate(C_cases=cumsum(New_cases), C_deaths=cumsum(New_deaths))|>
+  select(Country, Date_reported, C_cases, C_deaths)|>
+  pivot_longer(cols = c("C_cases", "C_deaths"), names_to = "Cases_deaths", values_to = "Count")|>
+  ggplot(aes(x=Date_reported, y=Count, color=Country))+
+  geom_line(aes(group=Country))+
+  labs(x = "",
+       y = "Number of cases",
+       title = "The number of cumulative cases and deaths through time")+
+  facet_wrap(~ Cases_deaths,scales = "free_y",labeller = labeller(Cases_deaths = c("C_cases" = "Cumulative Cases", "C_deaths" = "Cumulative Deaths")))+
+  scale_x_date(date_labels = "%b", date_breaks = "2 month")+
+  theme_minimal()
+
+```
+
+From looking at these two panels, we can see that all four countries experienced the COVID-19 wave starting around March-April 2020, but each country managed it differently. In June, the UK had the highest number of new cases, while France had the fewest. Surprisingly, in September, France had more cases than both Germany and Italy.
+
+Switching to the death cases wave, it began in April 2020 for all four countries. The second panel reveals how each country treated COVID-19 patients. The data indicates that the UK struggled and had the highest number of deaths among the four countries. In contrast, Germany had the fewest deaths, quite lower than the other countries, suggesting effective handling of the situation.
+
+## Smoothing daily data
+
+```{r}
+smooth3 <- function(x) {
+  (x + lag(x, n = 1, default = 0) + lag(x, n = 2, default = 0)) / 3
+}
+
+smooth7 <- function(x) {
+  (x + lag(x, n = 1, default = 0) + lag(x, n = 2, default = 0) + lag(x, n = 3, default = 0) +
+     lag(x, n = 4, default = 0) + lag(x, n = 5, default = 0) + lag(x, n = 6, default = 0)) / 7
+}
+
+smooth10 <- function(x) {
+  (x + lag(x, n = 1, default = 0) + lag(x, n = 2, default = 0) + lag(x, n = 3, default = 0) +
+     lag(x, n = 4, default = 0) + lag(x, n = 5, default = 0) + lag(x, n = 6, default = 0) +
+     lag(x, n = 7, default = 0) + lag(x, n = 8, default = 0) + lag(x, n = 9, default = 0)) / 10
+}
+
+who_smoothed <- who|>
+  group_by(Country)|>
+  mutate(
+    New_cases_smooth3 = smooth3(New_cases),
+    New_cases_smooth7 = smooth7(New_cases),
+    New_cases_smooth10 = smooth10(New_cases),
+    New_deaths_smooth3 = smooth3(New_deaths),
+    New_deaths_smooth7 = smooth7(New_deaths),
+    New_deaths_smooth10 = smooth10(New_deaths)
+  )
+```
+
+```{r}
+who_smoothed|>
+  filter(Country == "Germany", Date_reported <= "2020-08-31") |>
+  pivot_longer(
+    cols = c("New_cases", "New_cases_smooth3", "New_cases_smooth7", "New_cases_smooth10"),
+    names_to = "Smooth_Variable",
+    values_to = "Count"
+  )|>
+  ggplot(aes(x = Date_reported, y = Count, color = Smooth_Variable)) +
+  geom_line(aes(group = Smooth_Variable)) +
+  labs(
+    x = "",
+    y = "Number of Cases",
+    title = "Comparison of Smoothed Cases and Daily New Cases in Germany until 2020-08-31",
+    color = ""
+  ) +
+  theme_minimal() +
+  facet_wrap(~ Smooth_Variable, scales = "free_y", labeller = labeller(Smooth_Variable = c("New_cases" = "New cases through time","New_cases_smooth3" = "Smoothed Cases for the last 3 days", "New_cases_smooth7" = "Smoothed Cases for the last 7 days", "New_cases_smooth10" = "Smoothed Cases for the last 10 days"))) +
+  theme(legend.position = "none")
+```
+
+Here we can see the New cases(Daily data) graph, and the other three smoothed graphs for the last 3 days, 7 days and 10 days. We notice that using a 7-day window makes the data smoother. This means that using a 7-day window provides a balance between capturing the trends and reducing daily variations. The reason it's better than a 10-day window might be because the data relies more on weekly patterns. If we use the last 10 days, there could be more ups and downs between each of those 10 days. It all depends on how the data is reported.
+
+## How do deaths follow cases?
+
+```{r}
+shiftscale <- function(x, shift, scale) {
+  lagged_x <- lag(x, shift, default = 0)
+  scaled_x <- lagged_x * scale
+  return(scaled_x)}
+
+who_smoothed|>
+  mutate(shiftscale_cases = shiftscale(New_cases_smooth7, 5, 0.062))|>
+  filter(Country == "Germany", Date_reported <= "2020-08-31")|>
+  pivot_longer(cols = c("shiftscale_cases", "New_deaths_smooth7"),
+               names_to = "Variable",
+               values_to = "Count")|>
+  ggplot(aes(x = Date_reported, y = Count, color = Variable)) +
+  geom_line(aes(group = Variable)) +
+  labs(x = "",
+       y = "Number of Cases/Deaths",
+       title = "Comparison of Shiftscaled Cases and Deaths for Germany till 2020-08-31",
+       subtitle = "(the time series are smoothed over the last 7 days)",
+       color = "")+
+  scale_color_manual(values = c("New_deaths_smooth7" = "red","shiftscale_cases" = "blue"),
+                     labels = c("Deaths (Smoothed)", "Scaled and Shifted New Cases (Smoothed)"))+
+  scale_x_date(date_labels = "%b %Y", date_breaks = "2 month")+
+  theme_minimal()
+```
+
+I made this graph using shift=5 and scale=0.062. The Scaled-Shifted New Cases and Deaths graphs overlap well. With a shift of 5, it looks like the Deaths wave comes five days after the New Cases wave. Also, from the scale of 0.062, we can say that about 6.2% of the New Cases are Death Cases.
+
+```{r}
+who_smoothed|>
+  mutate(shiftscale_cases = shiftscale(New_cases_smooth7, 6, 0.035))|>
+  filter(Country == "Germany", Date_reported >= "2020-07-01", Date_reported <= "2020-12-31")|>
+  pivot_longer(cols = c("shiftscale_cases", "New_deaths_smooth7"),
+               names_to = "Variable",
+               values_to = "Count")|>
+  ggplot(aes(x = Date_reported, y = Count, color = Variable)) +
+  geom_line(aes(group = Variable)) +
+  labs(x = "",
+       y = "Number of Cases/Deaths",
+       title = "Comparison of Shiftscaled Cases and Deaths for Germany",
+       subtitle = "from 2020-07-01 till 2020-12-31(the time series are smoothed over the last 7 days)",
+       color = "")+
+  scale_color_manual(values = c("New_deaths_smooth7" = "red","shiftscale_cases" = "blue"),
+                     labels = c("Deaths (Smoothed)", "Scaled and Shifted New Cases (Smoothed)"))+
+  scale_x_date(date_labels = "%b %Y", date_breaks = "2 month")+
+  theme_minimal()
+```
+
+In these graphs, we notice they don't match perfectly because we only adjusted the shifting and scaling for the first wave. This suggests the first wave has a different pattern than the second one. The Scaled and Shifted New Cases still needs more scaling to align better with the Deaths graph. To make them overlap well, the scale should be 0.035 (which means the difference between New cases and Deaths in this graph is more pronounced than in the first wave graph).
+
+```{r}
+country1 <- "Kosovo[1]"
+country2 <- "Albania"
+
+who_smoothed|>
+  mutate(shiftscale_cases_second = shiftscale(New_cases_smooth7, 0, 0.035))|>
+  filter(Country %in% c(country1, country2), Date_reported <= "2020-08-31")|>
+  pivot_longer(cols = c("shiftscale_cases_second", "New_deaths_smooth7"),
+               names_to = "Variable",
+               values_to = "Count")|>
+  ggplot(aes(x = Date_reported, y = Count, color = Variable)) +
+  geom_line(aes(group = Variable)) +
+  labs(x = "",
+       y = "Number of Cases/Deaths",
+       title ="Comparison of Scaled and shifted Cases and Deaths in Kosovo and Albania",
+       subtitle = "till 2020-08-31 (the time series are smoothed over the last 7 days)",
+       color = "Variable")+
+  theme_minimal()+
+  scale_color_manual(
+    values = c("New_deaths_smooth7" = "red","shiftscale_cases_second" = "blue"),
+    labels = c("Deaths (Smoothed)", "Scaled and Shifted New Cases (Smoothed)")) +
+  facet_wrap(~Country, scales = "free_y", labeller = labeller(Country = c("Kosovo[1]" = "Kosovo", "Albania" = "Albania"))) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "2 month")+
+  theme(legend.position = "top", legend.title = element_blank())
+
+```
+
+This chart displays the first wave of COVID-19 in Albania and Kosovo. I have used the same shifting-scaling and also the smoothing of the data using 7-days window. We can see that at the beginning of April the increase of new cases number was almost the same for both countries but as for the death cases, Albania had a bigger increase of the numbers which means they didn't handle the situation that well. Then from July 2020, there's also another big increase of the cases but a different continuation for both countries. We can see that by August 2020, in Albania, the number of New cases was still increasing but the number of deaths was decreasing slightly. On the other hand, we have the complete opposite for Kosovo by August 2020 where the number of decreasing quite rapidly but the number of deaths was continuously increasing. This tells us that Kosovo had more difficulties managing the situation and treating patients. Compared to the number of cases of Germany, both countries have much less New cases and Deaths since Albania and Kosovo are considered small countries and that's why the outbreak is less pronounced.
+
+## When does the wave break?
+
+```{r}
+# Convert Date_reported to Date class
+
+who_smoothed |>
+  mutate(Diff_cases_smooth7 = New_cases_smooth7 - lag(New_cases_smooth7, default = 0)) |>
+  filter(Country == "Germany", Date_reported >= "2020-03-01", Date_reported <= "2020-04-15") |>
+  pivot_longer(cols = c("New_cases_smooth7", "Diff_cases_smooth7"),
+               names_to = "Variable",
+               values_to = "Count") |>
+  ggplot(aes(x = Date_reported, y = Count, color = Variable)) +
+  geom_line(aes(group = Variable)) +
+  labs(x = "",
+       y = "Number of Cases",
+       title = "Smoothed New Cases and Derivative (Diff) in Germany",
+       subtitle = "from 1st of March to 15th of April (the time series are smoothed over the last 7 days)",
+       color = "Variable") +
+  theme_minimal() +
+  facet_grid(Variable ~ ., scales = "free_y", labeller = labeller(Variable = c("Diff_cases_smooth7" = "Derivative of new cases", "New_cases_smooth7" = "New cases (smoothed)"))) +
+  scale_x_date(date_breaks = "2 days", date_labels = "%d") +
+  theme(legend.position = "none")
+
+
+```
+
+The first panel shows the derivative of new cases and the second panel shows the New cases smoothed. The peak of the diff is on 20th of March whereas for the smoothed New cases the peak is at 4th of April. The derivative of the New Cases can help us identify when the rate of new cases was changing most rapidly for example the biggest number of the new cases was at 20th of March whereas the lowest number of the new cases was at 11th of March.
+
+# World Development Indicators in R
+
+## Changing the names of the variables
+
+```{r}
+wdi <- wdi|>
+  rename(
+    urban_pop = Urban.population....of.total.population.,
+    rural_pop = Rural.population....of.total.population.,
+    pop_lower_half_median = Proportion.of.people.living.below.50.percent.of.median.income....,
+    pop = Population..total,
+    pop_older65 = Population.ages.65.and.above....of.total.population.,
+    pop_density = Population.density..people.per.sq..km.of.land.area.,
+    physicians_per_1000 = Physicians..per.1.000.people.,
+    life_expectancy = Life.expectancy.at.birth..total..years.,
+    gdp_per_capita = GDP.per.capita..PPP..current.international...
+  )
+```
+
+## Correlation matrix of all numerical indicators in the WDI data set
+
+```{r}
+cor_matrix <- cor(wdi[, sapply(wdi, is.numeric)], use = "complete.obs")
+
+corrplot(cor_matrix, tl.cex = 0.7, tl.col = "black", tl.srt = 45)
+```
+
+From this correlation matrix, we can see the most correlated variables which are rural_pop with urban_pop (negatively correlated). This makes sense since the increase of the urban population will cause a decrease of the rural population and the other way around (since they both sum up to 100). Whereas, the most positively correlated variables are physicians_per_1000 with pop_older65, life_expectancy with pop_older65, and gdp_per_capita with pop_older65. This comes from the fact with the increase of the percentage of population 65 and above, the physicians per 1000 will also increase, life expectancy will increase and also gdp per capital will increase. On the other hand, the variables which are the least correlated are life_expectancy with pop_density (we dont know what will the population density will be if we know the life expectancy of the population). Moreover, we can see which variables are not correlated at all with any variable (the blank squares).
+
+# Removing countries with NA's and removing variables with NA's
+
+```{r}
+wdi_noNA_small <- na.omit(wdi)
+
+wdi_noNA_large <-  wdi|>
+  select(-c("pop_lower_half_median", "gdp_per_capita"))
+wdi_noNA_large <- na.omit(wdi_noNA_large) 
+```
+
+### Missing countries
+
+There are `r nrow(wdi_noNA_small)` countries in the `wdi_noNA_small` data frame, and there are `r nrow(wdi_noNA_large)` countries in the `wdi_noNA_large` data frame.
+
+Table for the small data frame listing countries in wdi but not in wdi_noNA_small with more than one million population:
+
+```{r}
+missing_countries_small <- wdi|>
+  anti_join(wdi_noNA_small, by = c("country"))|>
+  filter(pop > 1e6)
+
+kable(missing_countries_small, caption = "Countries in wdi but not in wdi_noNA_small with population > 1 million")
+```
+
+Table for the large data frame (wdi_noNA_large) with the same criteria:
+
+```{r}
+missing_countries_large <- wdi|>
+  anti_join(wdi_noNA_large, by = c("country"))|>
+  filter(pop > 1e6)
+
+kable(missing_countries_large, caption = "Countries in wdi but not in wdi_noNA_small with population > 1 million")
+```
+
+### PCA small
+
+Selecting the numeric variables and scaling for the PCA:
+
+```{r}
+wdi_small <- wdi_noNA_small |>
+  select_if(is.numeric)
+
+pca_result_s <- prcomp(wdi_small, scale. = TRUE)
+```
+
+```{r}
+barplot(pca_result_s$sdev^2 / sum(pca_result_s$sdev^2), 
+        names.arg = 1:length(pca_result_s$sdev),
+        xlab = "Principal Component", ylab = "Proportion of Variance Explained",
+        main = "Explained Variance by Principal Components",
+        ylim = c(0, 1),
+        col = "lightblue")
+axis(2, at = seq(0, 1, by = 0.1))
+```
+
+PC1 describes the largest varience between the variables and PC2 explains the second largest variance between the variables. From this barplot we can see how much each Principal Component explains the variance in our data. We need the first 6 PCs to sufficiently explain the variance because if we sum up all the explained variance of them, we get around 90% of the explained variance.
+
+```{r}
+rotation_matrix_s <- pca_result_s$rotation[, 1:4]
+
+rotation_matrix_df_s <- as.data.frame(rotation_matrix_s)|>
+  rownames_to_column(var = "Variable")|>
+  gather(key = "Principal_Component", value = "Loading", -Variable)
+
+ggplot(rotation_matrix_df_s, aes(x = Loading, y = Variable, fill = Variable)) +
+  geom_bar(stat = "identity", position = "dodge", color = "white") +
+  labs(title = "Rotation Matrix Visualization",
+    x = "Loading",
+    y = "",
+    fill = "Variable"
+  ) +
+  theme_minimal() +
+  facet_wrap(~ Principal_Component, scales = "free_y", ncol = 1)
+```
+
+From these barplot panels we can see the variable loading of each variable for each Principal Component. For the PC1, we can see that most of the variables have a +-0.4 loading where only pop_lower_half_median, pop_density and pop have a very low loading. For PC2, pop_lower_half_median has 0.7 loading and for PC3, pop has almost a -0.8 loading. For PC4, pop_density and pop have the highest loadings.
+
+```{r}
+pca_df_s <- data.frame(
+  country = wdi_noNA_small$country,
+  region = wdi_noNA_small$region,
+  iso3c = wdi_noNA_small$iso3c,
+  PC1 = pca_result_s$x[, 1],
+  PC2 = pca_result_s$x[, 2])
+
+ggplot(pca_df_s, aes(x = PC1, y = PC2, color = region, label = iso3c)) +
+  geom_text(size = 3) +
+  labs(
+    title = "Countries in the Coordinates of PC1 and PC2",
+    x = "Principal Component 1",
+    y = "Principal Component 2",
+    color = "Region"
+  ) +
+  theme_minimal()
+```
+
+In this graphic we can all the countries in the small data frame, with their 3 letter iso codes, each country nearly grouped together based on the region they are in. We can see that the East Asia & Pacific and Europe & Central Asia countries are grouped near each other showing that they are similar with the patterns in the variation of these principal components.
+
+Europe & Central Asia group is much different from the Sub-Saharan Africa since they are quite far from each other on the PC1 axis.
+Europe & Central Asia countries are negative for PC1 which means that with increase of values of these countries the PC1 decreases. Based on this fact, we can conclude that the Europe & Central Asia countries have more urban population, less rural poulation, more population older than 65, more physicians per 1000, higher life expectancy, and higher gdp_per capita.  However, Sub-Saharan Africa countries are positive for PC1 which means that with increase of values of these countries the PC1 increases, therefore these countries have less urban population and more rural population, less population older than 65, less physicians per 1000, lower life expectancy and lower gdp per capital.
+
+Another point we can make is that the Latin America & Caribbean countries are different from South Asia countries since they are far away from each other on the PC2 axis. South Asia countries are negative for PC2 which means that with increase of values of these countries the PC2 decreases. Based on this fact, we can conclude that South Asian countries have a much bigger population density and more population who live above 50% of the  median income. However, Latin America & Caribbean countries are positive for PC2 which means that with increase of values of these countries the PC2 increases, which means that these countries have more population who live below the 50% of the median income, and lower populaton density.
+
+### PCA large
+
+Selecting the numeric variables and scaling for the PCA:
+
+```{r}
+wdi_large <- wdi_noNA_large |>
+  select_if(is.numeric)
+
+pca_result_l <- prcomp(wdi_large, scale. = TRUE)
+```
+
+```{r}
+barplot(pca_result_l$sdev^2 / sum(pca_result_l$sdev^2), 
+        names.arg = 1:length(pca_result_l$sdev),
+        xlab = "Principal Component", ylab = "Proportion of Variance Explained",
+        main = "Explained Variance by Principal Components",
+        ylim = c(0, 1),
+        col = "orchid")
+axis(2, at = seq(0, 1, by = 0.1))
+```
+
+From this barplot we can see how much each Principal Component explains the variance in our data. We need the first 5 PCs to sufficiently explain the variance because if we sum up all the explained variance of them, we get around 90% of the explained variance.
+
+```{r}
+rotation_matrix_l <- pca_result_l$rotation[, 1:4]
+
+rotation_matrix_df_l <- as.data.frame(rotation_matrix_l) %>%
+  rownames_to_column(var = "Variable") %>%
+  gather(key = "Principal_Component", value = "Loading", -Variable)
+
+ggplot(rotation_matrix_df_l, aes(x = Loading, y = Variable, fill = Variable)) +
+  geom_bar(stat = "identity", position = "dodge", color = "white") +
+  labs(title = "Rotation Matrix Visualization",
+    x = "Loading",
+    y = "",
+    fill = "Variable"
+  ) +
+  theme_minimal() +
+  facet_wrap(~ Principal_Component, scales = "free_y", ncol = 1)
+```
+
+From these barplot panels we can see the loading of each variable for each Principal Component. For the PC1, we can see that most of the variables have almost a +-0.4 loading where only pop_density and pop have a very low loading. For PC2, pop_density has a 0.6 loading and for PC3, pop has almost a -0.9 loading. For PC4 urban_pop and pop_density have the highest loadings.
+
+```{r}
+pca_df_l <- data.frame(
+  country = wdi_noNA_large$country,
+  region = wdi_noNA_large$region,
+  iso3c = wdi_noNA_large$iso3c,
+  PC1 = pca_result_l$x[, 1],
+  PC2 = pca_result_l$x[, 2])
+
+ggplot(pca_df_l, aes(x = PC1, y = PC2, color = region, label = iso3c)) +
+  geom_text(size = 3) +
+  labs(
+    title = "Countries in the Coordinates of PC1 and PC2",
+    x = "Principal Component 1",
+    y = "Principal Component 2",
+    color = "Region"
+  ) +
+  theme_minimal()
+```
+
+In this graphic we can all the countries in the large data frame, with their 3 letter iso codes, each country nearly grouped together based on the region they are in. We can see that the Europe & Central Asia and Latin America & Caribbean countries are clustered near each other showing that they are similar with the patterns in the variation of these principal components. 
+
+Firstly, Europe & Central Asia countries are much different from the Sub-Saharan Africa since they are quite far from each other on the PC1 axis. Europe & Central Asia countries are positive for PC1 which means that with increase of values of these countries the PC1 increases. Based on this, we can conclude that the Europe & Central Asia countries have more urban population, less rural poulation, more population older than 65, more physicians per 1000, higher life expectancy. However, Sub-Saharan Africa countries are negative for PC1 which means that with increase of values of these countries the PC1 decreases, these countries have less urban population and more rural population, less population older than 65, less physicians per 1000, lower life expectancy.
+
+Secondly, the Middle East & North Africa countries are different from Europe & Central Asia countries since they are far away from each other on the PC2 axis. Europe & Central Asia countries are negative for PC2 which means that with increase of values of these countries the PC2 decreases, therefore these countries also have a lower population density. However, Middle East & North Africa countries are positive for PC2 which means that with increase of values of these countries the PC2 increases, therefore they have a higher population density and lower rate of physicians per 1000.
